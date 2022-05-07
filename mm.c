@@ -39,7 +39,7 @@ team_t team = {
 #define ALIGNMENT 8
 
 /* rounds up to the nearest multiple of ALIGNMENT */
-#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
+#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7) // 가장 가까운 ALIGNMENT(8)의 배수 리턴
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
@@ -243,7 +243,7 @@ static void *coalesce(void *bp)
         bp = PREV_BLKP(bp); // 앞이랑 합쳤으니까 bp 업데이트
     }
     else { // case 4 - 앞, 뒤 모두 합치는 경우
-        size += GET_SIZE(HDP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
+        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // 이전 block의 header 업데이트
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0)); // 이후 block의 footer 업데이트
         bp = PREV_BLKP(bp);
@@ -255,33 +255,23 @@ static void *coalesce(void *bp)
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
-void *mm_realloc(void *ptr, size_t size)
+void *mm_realloc(void *bp, size_t size)
 {
-    void *oldptr = ptr;
+    void *oldptr = bp;
     void *newptr;
     size_t copySize;
     
     newptr = mm_malloc(size);
     if (newptr == NULL)
-      return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
+        return NULL;
+    
+    copySize = GET_SIZE(HDRP(bp));
+    // copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
+    
     if (size < copySize)
-      copySize = size;
+        copySize = size;
+    
     memcpy(newptr, oldptr, copySize);
     mm_free(oldptr);
     return newptr;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
