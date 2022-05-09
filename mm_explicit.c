@@ -72,9 +72,12 @@ team_t team = {
 #define PREV_ADDR(bp) (*(int *)(PRDP(bp)))
 #define NEXT_ADDR(bp) (*(int *)(SUCP(bp)))
 
+// 만들 수 있는 최소한의 블록 사이즈(implicit이냐, explicit이냐에 따라 수정)
+// header+predecessor+successor+footer = 16이므로 payload가 들어갈 최소 공간(8)까지 세 배 할당
+#define MIN_BLOCK_SIZE 3*DSIZE // explicit
+
 // heap_listp -> static global variable
 static void *heap_listp = NULL; // heap의 시작점 가리킴
-static void *start_bp = NULL; // 할당시켰던 마지막 bp(next_fit에 사용)
 static void *root = NULL; // Linked List의 시작점
 
 int mm_init(void);
@@ -84,7 +87,12 @@ static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
 static void *find_fit(size_t asize);
 static void place(void *bp, size_t asize);
+static void linked_list_delete(void *bp);
+static void insert_to_root(void *bp);
+static void linked_list_connect(void *prev_bp, void *now_bp, void *next_bp);
 
+
+// explicit check done
 /* 
  * mm_init - initialize the malloc package.
  */
@@ -107,12 +115,12 @@ int mm_init(void)
     if (bp = extend_heap(CHUNKSIZE/WSIZE) == NULL) { // 힙을 늘릴 수 없으면
         return -1;
     }
-    root = PRDP(bp); // root 초기화
-    PUT(PRDP(bp), NULL); // 처음으로 생긴 블록의 pred를 NULL로 지정(root를 가리키므로)
-    PUT(SUCP(bp), NULL); // succ을 NULL로 지정(linked list의 마지막 블록이므로)
+    insert_to_root(bp);
     return 0;
 }
 
+// explicit check done
+// extend해서 생긴 블록은 여기서 pred, succ 설정해줄 필요 없음. 오히려 그러면 안됨.
 static void *extend_heap(size_t words)
 {
     char *bp; // block의 시작점(header 앞 / block pointer 인듯)
@@ -137,6 +145,7 @@ static void *extend_heap(size_t words)
 }
 
 
+// explicit check done
 /* 
  * mm_malloc - Allocate a block by incrementing the brk pointer.
  *     Always allocate a block whose size is a multiple of the alignment.
@@ -152,11 +161,11 @@ void *mm_malloc(size_t size)
     }
     
     if (size <= DSIZE) { // 요청한 size가 8보다 작으면 
-        asize = 2*DSIZE; // header+footer = 8이므로 두 배 할당
+        asize = MIN_BLOCK_SIZE;
     }
-    else { // 요청한 사이즈(size)와 header+footer의 사이즈(DSIZE)와 여유 사이즈(DSIZE-1)를 고려해
+    else { // 요청한 사이즈(size)와 header+pred+succ+footer의 사이즈(2*DSIZE)와 여유 사이즈(DSIZE-1)를 고려해
     // DSIZE(8)의 배수(DSIZE*)만큼 할당하기 위한 식이 아래 식
-        asize = DSIZE * ((size + DSIZE + (DSIZE - 1)) / DSIZE);
+        asize = DSIZE * ((size + MIN_BLOCK_SIZE - 1) / DSIZE);
     }
 
     // asize에 맞는 블록 찾기
@@ -174,46 +183,52 @@ void *mm_malloc(size_t size)
     return bp;
 }
 
+// explicit check done
 // 링크드 리스트에서 asize에 맞는 bp를 찾아서 리턴
 static void *find_fit(size_t asize) {
-    void *bp = root;
-
+    void *bp = root; // 탐색을 root에서 시작
     size_t block_size = GET_SIZE(HDRP(bp)); // 블록 사이즈
     size_t alloc = GET_ALLOC(HDRP(bp)); // 블록 할당 여부
 
-    // 블록 사이즈가 1 이상(epilogue 사이즈가 0)이고, 블록이 할당되었거나 asize가 블록 사이즈보다 클 동안
-    while (block_size && (alloc || (asize > block_size))) { 
+    // bp가 링크드 리스트의 끝에 도달(bp == NULL)하지 않고, 블록이 할당되었거나 asize가 블록 사이즈보다 클 동안
+    while (bp != NULL && (alloc || (asize > block_size))) { 
         bp = NEXT_ADDR(bp); // 링크드 리스트의 다음 블록 주소
         block_size = GET_SIZE(HDRP(bp));
         alloc = GET_ALLOC(HDRP(bp));
     }
-    if (block_size) {
-        return bp;
-    }
-    return NULL;
+    return bp; // 값을 찾으나 찾지 못하나 bp 리턴
 }
 
+// explicit check done
 // bp 블록에 asize만큼 쪼개주고 할당상태로 바꿔주기
 static void place(void *bp, size_t asize) {
     size_t old_size = GET_SIZE(HDRP(bp));
 
-    // 원래의 block에 asize를 할당하고 또 한 개의 블록을 만들 수 있는 공간(2*DSIZE)이 나면
-    if ((old_size - asize) >= 2*DSIZE) { 
+    // 원래의 block에 asize를 할당하고 또 한 개의 블록을 만들 수 있는 공간(3*DSIZE)이 나면
+    if ((old_size - asize) >= MIN_BLOCK_SIZE) { 
+        void *prev_bp = PREV_ADDR(bp);
+        void *next_bp = NEXT_ADDR(bp);
+
         // 할당해줄 블록 header, footer 설정
         PUT(HDRP(bp), PACK(asize, 1)); 
         PUT(FTRP(bp), PACK(asize, 1));
+
         // 나머지 블록 header, footer 재설정
-        PUT(HDRP(NEXT_BLKP(bp)), PACK(old_size-asize, 0)); 
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(old_size-asize, 0));
+        bp = NEXT_BLKP(bp);
+        PUT(HDRP(bp), PACK(old_size-asize, 0)); 
+        PUT(FTRP(bp), PACK(old_size-asize, 0));
+        
+        // 나머지 블록과 기존 링크드 리스트 이웃 블록들과 재연결
+        linked_list_connect(prev_bp, bp, next_bp);
     }
     else { // 원래 블록 전체를 할당해야 하는 경우
+        linked_list_delete(bp); // 현재 블록을 링크드 리스트에서 삭제
         PUT(HDRP(bp), PACK(old_size, 1)); 
         PUT(FTRP(bp), PACK(old_size, 1));
     }
-    start_bp = NEXT_BLKP(bp);
 }
 
-
+// explicit check done
 /*
  * mm_free - Freeing a block does nothing.
  */
@@ -227,6 +242,8 @@ void mm_free(void *bp)
     coalesce(bp); // 이전 or 이후의 블록이 free라면 합체
 }
 
+// explicit check done
+// coalesce로 들어오는 bp는 pred, succ 설정이 되어 있지 않아야 한다.
 static void *coalesce(void *bp)
 {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // 이전 블록 할당 여부
@@ -234,37 +251,45 @@ static void *coalesce(void *bp)
     size_t size = GET_SIZE(HDRP(bp)); // 현재 블록의 사이즈
 
     if (prev_alloc && next_alloc) { // case 1 - 앞, 뒤 블록 모두 이미 할당
-        return bp;
+        // 패스
     }
     else if (prev_alloc && !next_alloc) { // case 2 - 앞 할당, 뒤 free -> 뒤랑 합체
+        linked_list_delete(NEXT_BLKP(bp));
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0)); // header의 값 업데이트
         PUT(FTRP(bp), PACK(size, 0)); // footer의 값 업데이트 -> 반드시 header-footer 순으로 업데이트 해야함(FTRP 함수에 HDRP가 쓰이기 떄문)
         // 원래 있던 footer랑 header는 처리 안해줌..? -> 아 그냥 쓰레기 값이 되는 구나(어차피 접근 불가)
     }
     else if (!prev_alloc && next_alloc) { // case 3 - 앞 free, 뒤 할당 -> 앞이랑 합체
+        linked_list_delete(PREV_BLKP(bp));
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0)); // 현재 block의 footer 업데이트
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // 이전 block의 header 업데이트
         bp = PREV_BLKP(bp); // 앞이랑 합쳤으니까 bp 업데이트
     }
     else { // case 4 - 앞, 뒤 모두 합치는 경우
+        linked_list_delete(NEXT_BLKP(bp));
+        linked_list_delete(PREV_BLKP(bp));
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // 이전 block의 header 업데이트
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0)); // 이후 block의 footer 업데이트
         bp = PREV_BLKP(bp);
     }
-    start_bp = bp;
+
+    insert_to_root(bp); // bp를 링크드 리스트의 root로 넣어줌
     return bp;
 }
 
+// explicit check done
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
-void *mm_realloc(void *bp, size_t size)
+void *mm_realloc(void *bp, size_t size) // bp를 size가 되도록 다시 allocate
 {
     void *oldptr = bp;
-    void *newptr;
+    void *newptr = NULL;
+    void *prev_bp = NULL;
+    void *next_bp = NULL;
     size_t copySize;
     
     newptr = mm_malloc(size);
@@ -277,6 +302,48 @@ void *mm_realloc(void *bp, size_t size)
         copySize = size;
     
     memcpy(newptr, oldptr, copySize);
+    linked_list_connect(prev_bp, newptr, next_bp); // 새로 옮겨진 블록 링크드 리스트 관계 옮겨주기
     mm_free(oldptr);
     return newptr;
+}
+
+// bp블록을 링크드리스트에서 삭제
+static void linked_list_delete(void *bp)
+{
+    void *prev_bp = PREV_ADDR(bp); // 링크드리스트에서 bp의 이전 블록
+    void *next_bp = NEXT_ADDR(bp); // bp의 이후 블록
+
+    // 링크드 리스트에 bp만 있었던 경우 -> 링크드 리스트 비워주기
+    if ((prev_bp == NULL) && (next_bp == NULL)) { 
+        root = NULL;
+    }
+    // bp가 root와 연결되어 있었던 경우 -> next_bp를 root와 연결
+    else if (prev_bp == NULL) { 
+        root = next_bp;
+        PUT(PRDP(next_bp), NULL);
+    }
+    // bp가 링크드 리스트의 맨 끝이었던 경우 -> prev_bp를 맨 끝으로
+    else if (next_bp == NULL) {
+        PUT(SUCP(prev_bp), NULL);
+    }
+    // bp의 앞, 뒤 블록이 모두 있었던 경우 -> prev_bp, next_bp를 서로 연결
+    else {
+        PUT(SUCP(prev_bp), next_bp);
+        PUT(PRDP(next_bp), prev_bp);
+    }
+}
+
+// bp를 링크드 리스트의 root로 넣어줌
+static void insert_to_root(void *bp) {
+    PUT(SUCP(bp), root); // root가 가리키던 블록을 bp의 successor로
+    PUT(PRDP(bp), NULL);
+    root = bp;
+}
+
+// 링크드 리스트에서 prev_bp와 now_bp와 next_bp를 연결
+static void linked_list_connect(void *prev_bp, void *now_bp, void *next_bp) {
+    PUT(SUCP(prev_bp), now_bp);
+    PUT(PRDP(now_bp), prev_bp);
+    PUT(PRDP(next_bp), now_bp);
+    PUT(SUCP(now_bp), next_bp);
 }
