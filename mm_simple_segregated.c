@@ -35,53 +35,46 @@ team_t team = {
     ""
 };
 
-/* 내가 작성한 매크로(책 참고) */
+/* 매크로 */
 #define WSIZE 4 // Word and header/footer size
 #define DSIZE 8 // Double word size
+#define CLASS_SIZE 14 // 나눌 클래스의 개수(0~13)
 #define CHUNKSIZE (1<<12) // heap 늘리는 최소 사이즈(4096byte -> 별 의미 없는듯)
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
-
-// 할당할 블록의 사이즈(size)와 할당 여부를 넣으면 그걸 합쳐줌 -> header에 들어갈 값이 됨
-#define PACK(size, alloc) ((size) | (alloc))
 
 // p를 unsigned int형 포인터라 치고 해당 포인터 주소에 저장된 값을 불러온다.
 // 헤더에 들어 있는 값 읽을 때 사용
 #define GET(p) (*(unsigned int *)(p))
 
 // p를 unsigned int형 포인터라 치고 해당 포인터 주소에 val을 저장
-// 헤더에 값 넣을 때 사용
 #define PUT(p, val) (*(unsigned int *)(p) = (val))
 
-// 헤더를 가리키는 포인터 p에 저장된 값을 읽어 해당 블록의 사이즈, 할당 여부 리턴(bytes)
-#define GET_SIZE(p) (GET(p) & ~0x7) // 사이즈는 4~32번째 비트에 저장돼 있다.
-#define GET_ALLOC(p) (GET(p) & 0x1)
+// bp : 블록의 succ 바로 뒤를 가리키는 포인터
+// bp를 가지고 해당 블록의 uccessor의 주소를 리턴
+#define SUCP(bp) ((char *)(bp) - WSIZE) // successor 위치 리턴
 
-// bp : 블록의 헤더 바로 뒤를 가리키는 포인터
-// bp를 가지고 해당 블록의 header와 footer, predecessor, successor의 주소를 리턴해줌
-#define HDRP(bp) ((char *)(bp) - WSIZE)
-#define FTRP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
-#define PRDP(bp) ((char *)(bp)) // predecessor 위치 리턴
-#define SUCP(bp) ((char *)(bp) + WSIZE) // successor 위치 리턴
+// successor에 저장된 값을 읽음
+// 할당된 상태일 때 : 해당 블록의 클래스 리턴
+// 할당되지 않은 상태일 때 : 링크드 리스트의 다음 블록 주소 리턴
+#define GET_SUCC(bp) (*(int *)(SUCP(bp)))
+#define NEXT_ADDR(bp) (*(int *)(SUCP(bp))) // 링크드 리스트의 다음 블록 주소 리턴
 
-// 다음, 이전 블록의 포인터 리턴
-#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE))) // 뒷 블록의 header에서 GET_SIZE
-#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE))) // 앞 블록의 footer에서 GET_SIZE
-
-// 링크드 리스트의 이전, 다음 블록 주소 리턴
-#define PREV_ADDR(bp) (*(int *)(PRDP(bp)))
-#define NEXT_ADDR(bp) (*(int *)(SUCP(bp)))
-
-
-// 만들 수 있는 최소한의 블록 사이즈(implicit이냐, explicit이냐에 따라 수정)
-// header+predecessor+successor+footer = 16이므로 payload가 들어갈 최소 공간(8)까지 세 배 할당
-#define MIN_BLOCK_SIZE 3*DSIZE // explicit
+// 만들 수 있는 최소한의 블록 사이즈(implicit이냐, explicit 등에 따라 수정)
+// successor = 4이므로 payload가 들어갈 최소 공간(4)까지 DSIZE 할당(8의 배수로 align)
+#define MIN_BLOCK_SIZE DSIZE // simple segregeted
 
 // heap_listp -> static global variable
 static void *heap_listp = NULL; // heap의 시작점 가리킴
-static void *root = NULL; // Linked List의 시작점
+static void *root_startp = NULL; // class별 root 포인터가 시작되는 지점
+
+// class_num에 따른 root의 주소 리턴
+#define ROOT_ADDR(class_num) (((class_num) * WSIZE) + (char *)(root_startp))
+// class_num에 따른 root 포인터 리턴
+#define ROOTP(class_num) GET(ROOT_ADDR(class_num))
 
 int mm_init(void);
+int root_init(void);
 void mm_free(void *bp);
 void *mm_malloc(size_t size);
 static void *extend_heap(size_t words);
@@ -91,17 +84,29 @@ static void place(void *bp, size_t asize);
 static void linked_list_delete(void *bp);
 static void insert_to_root(void *bp);
 static void linked_list_connect(void *prev_bp, void *now_bp, void *next_bp);
+static int get_class(int asize);
 
+// heap 영역에 class의 root포인터를 저장할 공간을 할당
+int root_init()
+{
+    // class 개수만큼 할당
+    if ((root_startp = mem_sbrk(CLASS_SIZE*WSIZE)) == (void *) -1) {
+        return -1;
+    }
+    for (int i=0; i<CLASS_SIZE; i++) {
+        PUT(ROOT_ADDR(i), NULL); // 초기화
+    }
+}
 
-// explicit check done
 /* 
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
 {
-    // printf("---------------entered init!--------------- \n");
+    printf("---------------entered init!--------------- \n");
     char *bp = NULL;
-    root = NULL;
+    root_init(); // 힙 영역에 미리 class root들 초기화
+
     // mem_sbrk를 통해 힙 키우기가 성공하면 heap_listp에 old_brk값을 할당
     // start_of_heap과 prologue, epilogue 때문에 4 word인듯?
     if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *) -1) { // 힙을 늘릴 수 없는 경우
@@ -113,14 +118,14 @@ int mm_init(void)
     PUT(heap_listp + (3*WSIZE), PACK(0, 1)); // epilogue header
     heap_listp += (2*WSIZE); // 힙의 시작점 위치를 prologue header 뒤로 옮겨줌
 
-    // CHUNKSIZE만큼 힙 크기를 늘려줌
-    if (bp = extend_heap(CHUNKSIZE/WSIZE) == NULL) { // 힙을 늘릴 수 없으면
-        return -1;
-    }
+    // CHUNKSIZE만큼 힙 크기를 늘려줌 -----> 없어도 될듯?
+    // if (bp = extend_heap(CHUNKSIZE/WSIZE) == NULL) { // 힙을 늘릴 수 없으면
+    //     return -1;
+    // }
     return 0;
 }
 
-// explicit check done
+
 // extend해서 생긴 블록은 여기서 pred, succ 설정해줄 필요 없음. 오히려 그러면 안됨.
 static void *extend_heap(size_t words)
 {   
@@ -139,7 +144,6 @@ static void *extend_heap(size_t words)
     // (이전 힙의 epilogue, 새로 만든 힙의 끝-1 을 블록의 header, footer로 값을 넣어줌)
     // 힙의 맨 끝으로 epilogue의 header를 옮겨줌
     PUT(HDRP(bp), PACK(size, 0)); 
-    PUT(FTRP(bp), PACK(size, 0));
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); // epilogue header 옮겨주기
     
     // 앞의 블록이 free 상태이면 앞과 합체
@@ -162,8 +166,8 @@ void *mm_malloc(size_t size)
     if (size == 0) { // size 0 요청은 무시
         return NULL;
     }
-    
-    if (size <= DSIZE) { // 요청한 size가 8보다 작으면 
+    ///////////////////////////// 여기서부터 하기기기기ㅣ기기기기기
+    if (size <= WSIZE) { // 요청한 size가 8보다 작으면 
         asize = MIN_BLOCK_SIZE;
     }
     else { // 요청한 사이즈(size)와 header+pred+succ+footer의 사이즈(2*DSIZE)와 여유 사이즈(DSIZE-1)를 고려해
@@ -195,9 +199,9 @@ static void *find_fit(size_t asize) {
     // printf("entered find_fit!\n");
     void *bp = root; // 탐색을 root에서 시작
     
-    // bp가 링크드 리스트의 끝에 도달(bp == NULL)하지 않고, asize가 블록 사이즈보다 클 동안
+    // bp가 링크드 리스트의 끝에 도달(bp == NULL)하지 않고, 블록이 할당되었거나 asize가 블록 사이즈보다 클 동안
     // printf("find_fit with %p, %p\n", bp, NEXT_ADDR(bp));
-    while (bp != NULL && (asize > GET_SIZE(HDRP(bp)))) { 
+    while (bp != NULL && (GET_ALLOC(HDRP(bp)) || (asize > GET_SIZE(HDRP(bp))))) { 
         // printf("%p -> ", bp);
         bp = NEXT_ADDR(bp); // 링크드 리스트의 다음 블록 주소
     }
@@ -217,6 +221,7 @@ static void place(void *bp, size_t asize) {
         void *next_bp = NEXT_ADDR(bp);
     
         // 할당해줄 블록 header, footer 설정
+
         PUT(HDRP(bp), PACK(asize, 1)); 
         PUT(FTRP(bp), PACK(asize, 1));
     
@@ -374,4 +379,14 @@ static void linked_list_connect(void *prev_bp, void *now_bp, void *next_bp) {
     }
     PUT(PRDP(now_bp), prev_bp);
     PUT(SUCP(now_bp), next_bp);
+}
+
+// asize만큼 할당받고자 할 때 배정받을 최소 class 리턴
+// 2^0~2^12 + inf_class 때문에 0~13의 클래스가 대상
+static int get_class(int asize) {
+    int size_class = 0;
+    while ((asize > (1<<size_class)) && (size_class < 13)) {
+        size_class++;
+    }
+    return size_class;
 }
