@@ -179,8 +179,8 @@ void *mm_malloc(size_t size)
         return bp;
     }
     
-    
-    // 맞는 게 없다면
+    // printf("malloc extend_heap runned! with size : %d \n", size);
+    // 맞는 게 없다면 
     extend_size = MAX(asize, CHUNKSIZE); // CHUNKSIZE와 asize 중에 큰 값으로 힙 확장
     if ((bp = extend_heap(extend_size/WSIZE)) == NULL) { // 키우려는 사이즈의 word 수만큼 힙 확장 시도
         return NULL; // 힙 확장 실패하면
@@ -195,24 +195,22 @@ void *mm_malloc(size_t size)
 // 링크드 리스트에서 asize에 맞는 bp를 찾아서 리턴
 static void *find_fit(size_t asize) {
     // printf("entered find_fit!\n");
-    if (root == NULL) {
-        return NULL;
-    }
+    // if (root == NULL) {
+    //     return NULL;
+    // }
 
     void *bp = root; // 탐색을 root에서 시작
-    size_t block_size = GET_SIZE(HDRP(bp)); // 블록 사이즈
-    size_t alloc = GET_ALLOC(HDRP(bp)); // 블록 할당 여부
+    // size_t block_size = GET_SIZE(HDRP(bp)); // 블록 사이즈
+    // size_t alloc = GET_ALLOC(HDRP(bp)); // 블록 할당 여부
     
     // bp가 링크드 리스트의 끝에 도달(bp == NULL)하지 않고, 블록이 할당되었거나 asize가 블록 사이즈보다 클 동안
-    // printf("%p, %p\n", bp, NEXT_ADDR(bp));
-    while (NEXT_ADDR(bp) != NULL && (alloc || (asize > block_size))) { 
-        // printf("%p ", bp);
+    // printf("find_fit with %p, %p\n", bp, NEXT_ADDR(bp));
+    while (bp != NULL && (GET_ALLOC(HDRP(bp)) || (asize > GET_SIZE(HDRP(bp))))) { 
+        // printf("%p -> ", bp);
         bp = NEXT_ADDR(bp); // 링크드 리스트의 다음 블록 주소
-        block_size = GET_SIZE(HDRP(bp));
-        alloc = GET_ALLOC(HDRP(bp));
     }
-    
-    if (NEXT_ADDR(bp) != NULL) {
+    // printf("\n");
+    if (bp != NULL) {
         return bp;
     }
     return NULL;
@@ -311,8 +309,6 @@ void *mm_realloc(void *bp, size_t size) // bp를 size가 되도록 다시 alloca
     // printf("entered realloc! \n");
     void *oldptr = bp;
     void *newptr = NULL;
-    void *prev_bp = PREV_ADDR(oldptr);
-    void *next_bp = NEXT_ADDR(oldptr);
     size_t copySize;
     
     newptr = mm_malloc(size);
@@ -324,7 +320,6 @@ void *mm_realloc(void *bp, size_t size) // bp를 size가 되도록 다시 alloca
     if (size < copySize)
         copySize = size;
     
-    linked_list_connect(prev_bp, newptr, next_bp); // 새로 옮겨진 블록의 링크드 리스트 관계 옮겨주기
     memcpy(newptr, oldptr, copySize);
     mm_free(oldptr);
     
