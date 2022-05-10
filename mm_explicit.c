@@ -98,8 +98,9 @@ static void linked_list_connect(void *prev_bp, void *now_bp, void *next_bp);
  */
 int mm_init(void)
 {
+    // printf("---------------entered init!--------------- \n");
     char *bp = NULL;
-
+    root = NULL;
     // mem_sbrk를 통해 힙 키우기가 성공하면 heap_listp에 old_brk값을 할당
     // start_of_heap과 prologue, epilogue 때문에 4 word인듯?
     if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *) -1) { // 힙을 늘릴 수 없는 경우
@@ -115,14 +116,17 @@ int mm_init(void)
     if (bp = extend_heap(CHUNKSIZE/WSIZE) == NULL) { // 힙을 늘릴 수 없으면
         return -1;
     }
-    insert_to_root(bp);
+    // printf("init before insert, %p\n", bp);
+    // insert_to_root(bp);
+    // printf("init OK\n");
     return 0;
 }
 
 // explicit check done
 // extend해서 생긴 블록은 여기서 pred, succ 설정해줄 필요 없음. 오히려 그러면 안됨.
 static void *extend_heap(size_t words)
-{
+{   
+    // printf("entered extend_heap! \n");
     char *bp; // block의 시작점(header 앞 / block pointer 인듯)
     size_t size;
 
@@ -151,7 +155,8 @@ static void *extend_heap(size_t words)
  *     Always allocate a block whose size is a multiple of the alignment.
  */
 void *mm_malloc(size_t size)
-{
+{   
+    // printf("entered malloc! \n");
     size_t asize; // Adjusted block size, 할당된 블록의 크기
     size_t extend_size; // 맞는 블록이 없을 경우 늘릴 사이즈
     char *bp; // 블록이 시작하는 위치 포인터
@@ -167,57 +172,72 @@ void *mm_malloc(size_t size)
     // DSIZE(8)의 배수(DSIZE*)만큼 할당하기 위한 식이 아래 식
         asize = DSIZE * ((size + MIN_BLOCK_SIZE - 1) / DSIZE);
     }
-
+    
     // asize에 맞는 블록 찾기
     if ((bp = find_fit(asize)) != NULL) {
         place(bp, asize); // bp 블록을 쪼개고 할당해주기?
         return bp;
     }
     
+    
     // 맞는 게 없다면
     extend_size = MAX(asize, CHUNKSIZE); // CHUNKSIZE와 asize 중에 큰 값으로 힙 확장
     if ((bp = extend_heap(extend_size/WSIZE)) == NULL) { // 키우려는 사이즈의 word 수만큼 힙 확장 시도
         return NULL; // 힙 확장 실패하면
     }
+    
     place(bp, asize); // bp 블록에 쪼개고 할당해주기?
+    
     return bp;
 }
 
 // explicit check done
 // 링크드 리스트에서 asize에 맞는 bp를 찾아서 리턴
 static void *find_fit(size_t asize) {
+    // printf("entered find_fit!\n");
+    if (root == NULL) {
+        return NULL;
+    }
+
     void *bp = root; // 탐색을 root에서 시작
     size_t block_size = GET_SIZE(HDRP(bp)); // 블록 사이즈
     size_t alloc = GET_ALLOC(HDRP(bp)); // 블록 할당 여부
-
+    
     // bp가 링크드 리스트의 끝에 도달(bp == NULL)하지 않고, 블록이 할당되었거나 asize가 블록 사이즈보다 클 동안
-    while (bp != NULL && (alloc || (asize > block_size))) { 
+    // printf("%p, %p\n", bp, NEXT_ADDR(bp));
+    while (NEXT_ADDR(bp) != NULL && (alloc || (asize > block_size))) { 
+        // printf("%p ", bp);
         bp = NEXT_ADDR(bp); // 링크드 리스트의 다음 블록 주소
         block_size = GET_SIZE(HDRP(bp));
         alloc = GET_ALLOC(HDRP(bp));
     }
-    return bp; // 값을 찾으나 찾지 못하나 bp 리턴
+    
+    if (NEXT_ADDR(bp) != NULL) {
+        return bp;
+    }
+    return NULL;
 }
 
 // explicit check done
-// bp 블록에 asize만큼 쪼개주고 할당상태로 바꿔주기
+// bp 블록의 앞을 asize만큼 쪼개주고 할당상태로 바꿔주기
 static void place(void *bp, size_t asize) {
+    // printf("entered place!\n");
     size_t old_size = GET_SIZE(HDRP(bp));
-
+    
     // 원래의 block에 asize를 할당하고 또 한 개의 블록을 만들 수 있는 공간(3*DSIZE)이 나면
     if ((old_size - asize) >= MIN_BLOCK_SIZE) { 
         void *prev_bp = PREV_ADDR(bp);
         void *next_bp = NEXT_ADDR(bp);
-
+    
         // 할당해줄 블록 header, footer 설정
         PUT(HDRP(bp), PACK(asize, 1)); 
         PUT(FTRP(bp), PACK(asize, 1));
-
+    
         // 나머지 블록 header, footer 재설정
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(old_size-asize, 0)); 
         PUT(FTRP(bp), PACK(old_size-asize, 0));
-        
+    
         // 나머지 블록과 기존 링크드 리스트 이웃 블록들과 재연결
         linked_list_connect(prev_bp, bp, next_bp);
     }
@@ -234,6 +254,7 @@ static void place(void *bp, size_t asize) {
  */
 void mm_free(void *bp)
 {
+    // printf("entered free! \n");
     size_t size = GET_SIZE(HDRP(bp));
 
     // 블록의 header와 footer의 할당상태 0으로 바꿔줌
@@ -245,7 +266,8 @@ void mm_free(void *bp)
 // explicit check done
 // coalesce로 들어오는 bp는 pred, succ 설정이 되어 있지 않아야 한다.
 static void *coalesce(void *bp)
-{
+{   
+    // printf("entered coalesce!\n");
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // 이전 블록 할당 여부
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp))); // 이후 블록 할당 여부
     size_t size = GET_SIZE(HDRP(bp)); // 현재 블록의 사이즈
@@ -286,30 +308,33 @@ static void *coalesce(void *bp)
  */
 void *mm_realloc(void *bp, size_t size) // bp를 size가 되도록 다시 allocate
 {
+    // printf("entered realloc! \n");
     void *oldptr = bp;
     void *newptr = NULL;
-    void *prev_bp = NULL;
-    void *next_bp = NULL;
+    void *prev_bp = PREV_ADDR(oldptr);
+    void *next_bp = NEXT_ADDR(oldptr);
     size_t copySize;
     
     newptr = mm_malloc(size);
     if (newptr == NULL)
         return NULL;
     
-    copySize = GET_SIZE(HDRP(bp));
+    copySize = GET_SIZE(HDRP(oldptr));
     
     if (size < copySize)
         copySize = size;
     
+    linked_list_connect(prev_bp, newptr, next_bp); // 새로 옮겨진 블록의 링크드 리스트 관계 옮겨주기
     memcpy(newptr, oldptr, copySize);
-    linked_list_connect(prev_bp, newptr, next_bp); // 새로 옮겨진 블록 링크드 리스트 관계 옮겨주기
     mm_free(oldptr);
+    
     return newptr;
 }
 
 // bp블록을 링크드리스트에서 삭제
 static void linked_list_delete(void *bp)
-{
+{   
+    // printf("entered delete! \n");
     void *prev_bp = PREV_ADDR(bp); // 링크드리스트에서 bp의 이전 블록
     void *next_bp = NEXT_ADDR(bp); // bp의 이후 블록
 
@@ -335,15 +360,38 @@ static void linked_list_delete(void *bp)
 
 // bp를 링크드 리스트의 root로 넣어줌
 static void insert_to_root(void *bp) {
-    PUT(SUCP(bp), root); // root가 가리키던 블록을 bp의 successor로
-    PUT(PRDP(bp), NULL);
-    root = bp;
+    // printf("insert_to_root %p %p \n", bp, root);
+    // bp != root라는 가정
+    if (root == NULL) { // 링크드 리스트가 비어 있었던 경우
+        PUT(PRDP(bp), NULL);
+        PUT(SUCP(bp), NULL);
+        root = bp;
+    }
+    else {
+        PUT(PRDP(bp), NULL);
+        PUT(SUCP(bp), root);
+        PUT(PRDP(root), bp);
+        root = bp;
+    }
 }
 
 // 링크드 리스트에서 prev_bp와 now_bp와 next_bp를 연결
 static void linked_list_connect(void *prev_bp, void *now_bp, void *next_bp) {
-    PUT(SUCP(prev_bp), now_bp);
+    // printf("entered connect! %p %p %p\n", prev_bp, now_bp, next_bp);
+    if ((prev_bp == NULL) && (next_bp == NULL)) {
+        root = now_bp;
+    }
+    else if (prev_bp == NULL) {
+        root = now_bp;
+        PUT(PRDP(next_bp), now_bp);    
+    }
+    else if (next_bp == NULL) {
+        PUT(SUCP(prev_bp), now_bp);    
+    }
+    else {
+        PUT(SUCP(prev_bp), now_bp);
+        PUT(PRDP(next_bp), now_bp);    
+    }
     PUT(PRDP(now_bp), prev_bp);
-    PUT(PRDP(next_bp), now_bp);
     PUT(SUCP(now_bp), next_bp);
 }
