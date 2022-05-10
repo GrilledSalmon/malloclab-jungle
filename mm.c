@@ -116,9 +116,6 @@ int mm_init(void)
     if (bp = extend_heap(CHUNKSIZE/WSIZE) == NULL) { // 힙을 늘릴 수 없으면
         return -1;
     }
-    // printf("init before insert, %p\n", bp);
-    // insert_to_root(bp);
-    // printf("init OK\n");
     return 0;
 }
 
@@ -195,13 +192,7 @@ void *mm_malloc(size_t size)
 // 링크드 리스트에서 asize에 맞는 bp를 찾아서 리턴
 static void *find_fit(size_t asize) {
     // printf("entered find_fit!\n");
-    // if (root == NULL) {
-    //     return NULL;
-    // }
-
     void *bp = root; // 탐색을 root에서 시작
-    // size_t block_size = GET_SIZE(HDRP(bp)); // 블록 사이즈
-    // size_t alloc = GET_ALLOC(HDRP(bp)); // 블록 할당 여부
     
     // bp가 링크드 리스트의 끝에 도달(bp == NULL)하지 않고, 블록이 할당되었거나 asize가 블록 사이즈보다 클 동안
     // printf("find_fit with %p, %p\n", bp, NEXT_ADDR(bp));
@@ -326,7 +317,7 @@ void *mm_realloc(void *bp, size_t size) // bp를 size가 되도록 다시 alloca
     return newptr;
 }
 
-// bp블록을 링크드리스트에서 삭제
+// bp블록을 링크드 리스트에서 삭제
 static void linked_list_delete(void *bp)
 {   
     // printf("entered delete! \n");
@@ -357,17 +348,13 @@ static void linked_list_delete(void *bp)
 static void insert_to_root(void *bp) {
     // printf("insert_to_root %p %p \n", bp, root);
     // bp != root라는 가정
-    if (root == NULL) { // 링크드 리스트가 비어 있었던 경우
-        PUT(PRDP(bp), NULL);
-        PUT(SUCP(bp), NULL);
-        root = bp;
-    }
-    else {
-        PUT(PRDP(bp), NULL);
-        PUT(SUCP(bp), root);
+    if (root != NULL) {
         PUT(PRDP(root), bp);
-        root = bp;
     }
+    PUT(PRDP(bp), NULL);
+    PUT(SUCP(bp), root);
+    root = bp;
+
 }
 
 // 링크드 리스트에서 prev_bp와 now_bp와 next_bp를 연결
