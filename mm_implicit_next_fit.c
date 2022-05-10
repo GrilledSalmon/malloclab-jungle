@@ -176,16 +176,11 @@ void *mm_malloc(size_t size)
 static void *next_fit(size_t asize) {
     void *bp = (start_bp == NULL) ? heap_listp : start_bp;
 
-    size_t block_size = GET_SIZE(HDRP(bp)); // 블록 사이즈
-    size_t alloc = GET_ALLOC(HDRP(bp)); // 블록 할당 여부
-
     // 블록 사이즈가 1 이상(epilogue 사이즈가 0)이고, 블록이 할당되었거나 asize가 블록 사이즈보다 클 동안
-    while (block_size && (alloc || (asize > block_size))) { 
+    while (GET_SIZE(HDRP(bp)) && (GET_ALLOC(HDRP(bp)) || (asize > GET_SIZE(HDRP(bp))))) { 
         bp = NEXT_BLKP(bp);
-        block_size = GET_SIZE(HDRP(bp));
-        alloc = GET_ALLOC(HDRP(bp));
     }
-    if (block_size) {
+    if (GET_SIZE(HDRP(bp))) {
         return bp;
     }
     return NULL;
