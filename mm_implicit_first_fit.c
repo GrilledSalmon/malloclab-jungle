@@ -77,14 +77,13 @@ team_t team = {
 
 // heap_listp -> static global variable
 static void *heap_listp = NULL; // heap의 시작점 가리킴
-static void *start_bp = NULL; // 할당시켰던 마지막 bp(next_fit에 사용)
 
 int mm_init(void);
 void mm_free(void *bp);
 void *mm_malloc(size_t size);
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
-static void *next_fit(size_t asize);
+static void *find_fit(size_t asize);
 static void place(void *bp, size_t asize);
 
 /* 
@@ -157,7 +156,7 @@ void *mm_malloc(size_t size)
     }
 
     // asize에 맞는 블록 찾기
-    if ((bp = next_fit(asize)) != NULL) {
+    if ((bp = find_fit(asize)) != NULL) {
         place(bp, asize); // bp 블록을 쪼개고 할당해주기?
         return bp;
     }
@@ -172,19 +171,31 @@ void *mm_malloc(size_t size)
 }
 
 // 현재 힙에서 asize에 맞는 bp를 찾아서 리턴
-// next fit : 탐색할 때 다음 종료 지점부터 탐색
-static void *next_fit(size_t asize) {
-    void *bp = (start_bp == NULL) ? heap_listp : start_bp;
+static void *find_fit(size_t asize) {
+    int *bp = heap_listp; // bp 초기화(힙 시작점)
+    size_t block_size = GET_SIZE(HDRP(bp)); // 블록 사이즈
+    size_t alloc = GET_ALLOC(HDRP(bp)); // 블록 할당 여부
+    
+    // 책에 있는 거
+    // for (bp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+    //     if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+    //         return bp;
+    //     }
+    // }
+    // return NULL;
 
     // 블록 사이즈가 1 이상(epilogue 사이즈가 0)이고, 블록이 할당되었거나 asize가 블록 사이즈보다 클 동안
-    while (GET_SIZE(HDRP(bp)) && (GET_ALLOC(HDRP(bp)) || (asize > GET_SIZE(HDRP(bp))))) { 
+    while (block_size && (alloc || (asize > block_size))) { 
         bp = NEXT_BLKP(bp);
+        block_size = GET_SIZE(HDRP(bp));
+        alloc = GET_ALLOC(HDRP(bp));
     }
-    if (GET_SIZE(HDRP(bp))) {
+    if (block_size) {
         return bp;
     }
     return NULL;
 }
+
 
 // bp 블록에 asize만큼 쪼개주고 할당상태로 바꿔주기
 static void place(void *bp, size_t asize) {
@@ -203,7 +214,6 @@ static void place(void *bp, size_t asize) {
         PUT(HDRP(bp), PACK(old_size, 1)); 
         PUT(FTRP(bp), PACK(old_size, 1));
     }
-    start_bp = NEXT_BLKP(bp);
 }
 
 
@@ -247,7 +257,6 @@ static void *coalesce(void *bp)
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0)); // 이후 block의 footer 업데이트
         bp = PREV_BLKP(bp);
     }
-    start_bp = bp;
     return bp;
 }
 
@@ -265,6 +274,7 @@ void *mm_realloc(void *bp, size_t size)
         return NULL;
     
     copySize = GET_SIZE(HDRP(bp));
+    // copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
     
     if (size < copySize)
         copySize = size;
