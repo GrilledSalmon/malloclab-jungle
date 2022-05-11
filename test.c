@@ -3,14 +3,18 @@
 static int hi = 124;
 
 #define HII(a) (a)*(hi) + (hi)
+#define CLASS_SIZE 21
+#define WSIZE 4
 
 static int get_class(int size) {
-    size_t class_num = 0;
-    while (size > (1<<class_num)) {
+    size_t class_num = 3;
+    while (size + WSIZE > (1<<class_num)) {
         class_num++;
     }
-    if (class_num < 2){
-        return 2; // 최소 페이로드 크기가 WSIZE(4바이트이기 때문)
+
+    if (class_num >= CLASS_SIZE) { // 나중에 에러 안 뜨면 지워주기
+        printf("ERROR -- 너무 큰 사이즈가 들어와 클래스에 할당할 수 없습니다.\n");
+        return NULL;
     }
 
     return class_num;

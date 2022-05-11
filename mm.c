@@ -73,8 +73,8 @@ static void *root_startp = NULL; // class별 root 포인터가 시작되는 지�
 // class_num에 따른 root 포인터 리턴
 #define ROOTP(class_num) (void *)GET(ROOT_ADDR(class_num))
 
-/* class의 사이즈는 payload+padding영역 기준이다.(ex. 4-class의 블록 사이즈는 2^4 + WSIZE = 20) */
-
+/* class의 사이즈는 successor까지 포함한 것을 기준으로 한다.
+    (ex. 4-class의 블록 사이즈는 2^4 = 16이며, payload의 사이즈는 12가 된다.) */
 
 
 int mm_init(void);
@@ -91,7 +91,7 @@ static void insert_to_class(void *bp, size_t class_num);
 // heap 영역에 class의 root포인터를 저장할 공간을 할당
 int root_init()
 {   
-    printf("entered root_init!\n");
+    // printf("entered root_init!\n");
     // class 개수만큼 할당
     if ((root_startp = mem_sbrk(CLASS_SIZE*WSIZE)) == (void *) -1) {
         return -1;
@@ -108,7 +108,7 @@ int root_init()
  */
 int mm_init(void)
 {
-    printf("---------------entered init!--------------- \n");
+    // printf("---------------entered init!--------------- \n");
     char *bp = NULL;
     root_init(); // 힙 영역에 미리 class root들 초기화
 
@@ -130,7 +130,7 @@ int mm_init(void)
 // extend해서 생긴 블록은 여기서 pred, succ 설정해줄 필요 없음. 오히려 그러면 안됨.
 static void *extend_heap(size_t words)
 {   
-    printf("entered extend_heap! \n");
+    // printf("entered extend_heap! \n");
     char *bp; // block의 시작점(header 앞 / block pointer 인듯)
     size_t size;
 
@@ -155,7 +155,7 @@ static void *extend_heap(size_t words)
  */
 void *mm_malloc(size_t size)
 {   
-    printf("entered malloc with size : %d \n", size);
+    // printf("entered malloc with size : %d \n", size);
     
     if (size == 0) { // size 0 요청은 무시
         return NULL;
@@ -180,7 +180,7 @@ void *mm_malloc(size_t size)
 
     // printf("malloc extend_heap runned! with size : %d \n", size);
     // 맞는 게 없다면 
-    extend_size = created_block_num * (WSIZE + size); // 블록 갯수 * 블록 사이즈
+    extend_size = created_block_num * size; // 블록 갯수 * 블록 사이즈
     if ((bp = extend_heap(extend_size/WSIZE)) == NULL) { // 키우려는 사이즈의 word 수만큼 힙 확장 시도
         return NULL; // 힙 확장 실패하면
     }
@@ -200,8 +200,8 @@ void *mm_malloc(size_t size)
 // class_num의 root != NULL이 아니라는 가정
 static void allocate_block(void *bp, size_t class_num)
 {
-    printf("entered allocate_block! \n");
-    printf("%p %p %d\n", bp, ROOTP(class_num), class_num); // 왜 둘이 다르지??
+    // printf("entered allocate_block! \n");
+    // printf("%p %p %d\n", bp, ROOTP(class_num), class_num); // 왜 둘이 다르지??
     // 블록 제거(root가 succ 블록 가리키게 해주기)
     PUT(ROOT_ADDR(class_num), GET_SUCC(bp)); // class_num의 루트에 현재 bp가 가리키는 값 넣어줌
     PUT(SUCP(bp), class_num); // 할당된 블록의 successor에 자신의 클래스 번호 넣어주기
@@ -212,11 +212,11 @@ static void allocate_block(void *bp, size_t class_num)
 // 힙을 확장하며 생긴 영역을 분할하고 링크드 리스트에 추가
 static void extend_linked_list(void * bp, size_t created_block_num, size_t class_num)
 {
-    printf("entered extend_linked_list with bp : %p, b# : %d, class : %d\n", bp, created_block_num, class_num);
-    size_t block_size = WSIZE + (1<<class_num);
+    // printf("entered extend_linked_list with bp : %p, b# : %d, class : %d\n", bp, created_block_num, class_num);
+    size_t block_size = 1<<class_num;
     // root의 시작점으로 bp를 넣어줌
     PUT(ROOT_ADDR(class_num), bp);
-    printf("%p %p \n", ROOTP(class_num), bp);
+    // printf("%p %p \n", ROOTP(class_num), bp);
 
     // 링크드 리스트 연결
     for (int i=0; i < created_block_num-1; i++) {
@@ -234,7 +234,7 @@ static void extend_linked_list(void * bp, size_t created_block_num, size_t class
  */
 void mm_free(void *bp)
 {
-    printf("entered free! \n");
+    // printf("entered free! \n");
     size_t class_num = GET_SUCC(bp);
 
     PUT(SUCP(bp), ROOTP(class_num)); // 원래 root가 가리키던 블록을 bp의 succ이 가리키도록
@@ -257,7 +257,7 @@ void mm_free(void *bp)
  */
 void *mm_realloc(void *bp, size_t size) // bp를 size가 되도록 다시 allocate
 {
-    printf("entered realloc! \n");
+    // printf("entered realloc! \n");
     void *oldptr = bp;
     void *newptr = NULL;
     size_t copySize;
@@ -278,23 +278,17 @@ void *mm_realloc(void *bp, size_t size) // bp를 size가 되도록 다시 alloca
 }
 
 
-/* class의 사이즈는 payload+padding영역 기준이다.(ex. 4-class의 블록 사이즈는 2^4 + WSIZE = 20) */
+/* class의 사이즈는 successor까지 포함한 것을 기준으로 한다.
+    (ex. 4-class의 블록 사이즈는 2^4 = 16이며, payload의 사이즈는 12가 된다.) */
 
 // size만큼 할당받고자 할 때 배정받을 최소 class 리턴
 // 0~CLASS_SIZE-1 의 class가 대상
-static int get_class(int size) {
-    printf("entered get_class! \n");
-    size_t class_num = 0;
-    while (size > (1<<class_num)) {
+static int get_class(int size)
+{
+    // printf("entered get_class! \n");
+    size_t class_num = 3;
+    while (size + WSIZE > (1<<class_num)) {
         class_num++;
-    }
-    if (class_num < 2){
-        return 2; // 최소 페이로드 크기가 WSIZE(4바이트이기 때문)
-    }
-
-    if (class_num >= CLASS_SIZE) { // 나중에 에러 안 뜨면 지워주기
-        printf("ERROR -- 너무 큰 사이즈가 들어와 클래스에 할당할 수 없습니다.\n");
-        return NULL;
     }
 
     return class_num;
