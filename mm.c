@@ -63,10 +63,9 @@ team_t team = {
 // successor = 4이므로 payload가 들어갈 최소 공간(4)까지 DSIZE 할당(8의 배수로 align)
 #define MIN_BLOCK_SIZE DSIZE // simple segregeted -> 페이로드 4 바이트
 
-// heap_listp -> static global variable
-// 이거 그냥 함수 안으로 넣어줘도 될 것 같기도~~~~~~ -> root_startp는 안됨^^
-static void *heap_listp = NULL; // heap의 시작점 가리킴
-static void *root_startp = NULL; // class별 root 포인터가 시작되는 지점
+
+// class별 root 포인터가 시작되는 지점
+static void *root_startp = NULL; 
 
 // class_num에 따른 root의 주소 리턴
 #define ROOT_ADDR(class_num) (((class_num) * WSIZE) + (char *)(root_startp))
@@ -109,6 +108,7 @@ int root_init()
 int mm_init(void)
 {
     // printf("---------------entered init!--------------- \n");
+    void *heap_listp = NULL; // heap의 시작점 가리킴
     char *bp = NULL;
     root_init(); // 힙 영역에 미리 class root들 초기화
 
@@ -131,7 +131,7 @@ int mm_init(void)
 static void *extend_heap(size_t words)
 {   
     // printf("entered extend_heap! \n");
-    char *bp; // block의 시작점(header 앞 / block pointer 인듯)
+    char *bp; // block의 시작점
     size_t size;
 
     // alignment를 위해 words의 사이즈가 홀수면 1을 더해서 2의 배수로 맞춰주고 byte 크기에 맞도록 WSIZE를 곱해준다.
@@ -166,9 +166,19 @@ void *mm_malloc(size_t size)
     size_t created_block_num; // 생성된 블록 갯수
     char *bp; // 블록이 시작하는 위치 포인터
     
+
+    // size_t temp_class_num = class_num;
+
     // class에 블록이 있나 찾기
+    // bp = ROOTP(temp_class_num);
+    // while ((bp == NULL) && temp_class_num <= CLASS_SIZE) {
+    //     temp_class_num++;
+    //     bp = ROOTP(temp_class_num);
+    // }
+
     bp = ROOTP(class_num);
     if (bp != NULL) {
+        // allocate_block(bp, temp_class_num);
         allocate_block(bp, class_num);
         return bp;
     }
@@ -177,6 +187,7 @@ void *mm_malloc(size_t size)
     
     // 할당해야 하는 블록의 사이즈가 CHUNKSIZE보다 작으면 블록의 갯수는 나눈 수만큼, 아니면 한 개만 할당
     created_block_num = (size <= CHUNKSIZE) ? CHUNKSIZE / size : 1;
+    // created_block_num = 1;
 
     // printf("malloc extend_heap runned! with size : %d \n", size);
     // 맞는 게 없다면 
@@ -228,7 +239,6 @@ static void extend_linked_list(void * bp, size_t created_block_num, size_t class
 
 
 
-// explicit check done
 /*
  * mm_free - Freeing a block does nothing.
  */
@@ -241,15 +251,6 @@ void mm_free(void *bp)
     PUT(ROOT_ADDR(class_num), bp); // class의 root가 bp를 가리키도록
 
 }
-
-
-// // free된 블록을 원래 class로 다시 넣어줌
-// static void insert_to_class(void *bp, size_t class_num) 
-// {  
-//     PUT(SUCP(bp), ROOTP(class_num)); // 원래 root가 가리키던 블록을 bp의 succ이 가리키도록
-//     PUT(ROOT_ADDR(class_num), bp); // class의 root가 bp를 가리키도록
-// }
-
 
 
 /*

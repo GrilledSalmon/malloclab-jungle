@@ -63,18 +63,17 @@ team_t team = {
 // successor = 4이므로 payload가 들어갈 최소 공간(4)까지 DSIZE 할당(8의 배수로 align)
 #define MIN_BLOCK_SIZE DSIZE // simple segregeted -> 페이로드 4 바이트
 
-// heap_listp -> static global variable
-// 이거 그냥 함수 안으로 넣어줘도 될 것 같기도~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-static void *heap_listp = NULL; // heap의 시작점 가리킴
-static void *root_startp = NULL; // class별 root 포인터가 시작되는 지점
+
+// class별 root 포인터가 시작되는 지점
+static void *root_startp = NULL; 
 
 // class_num에 따른 root의 주소 리턴
 #define ROOT_ADDR(class_num) (((class_num) * WSIZE) + (char *)(root_startp))
 // class_num에 따른 root 포인터 리턴
-#define ROOTP(class_num) GET(ROOT_ADDR(class_num))
+#define ROOTP(class_num) (void *)GET(ROOT_ADDR(class_num))
 
-/* class의 사이즈는 payload+padding영역 기준이다.(ex. 4-class의 블록 사이즈는 2^4 + WSIZE = 20) */
-
+/* class의 사이즈는 successor까지 포함한 것을 기준으로 한다.
+    (ex. 4-class의 블록 사이즈는 2^4 = 16이며, payload의 사이즈는 12가 된다.) */
 
 
 int mm_init(void);
@@ -82,23 +81,16 @@ int root_init(void);
 void mm_free(void *bp);
 void *mm_malloc(size_t size);
 static void *extend_heap(size_t words);
-// static void *coalesce(void *bp);
-// static void *find_fit(size_t asize);
-// static void place(void *bp, size_t asize);
-static void linked_list_delete(void *bp);
-static void insert_to_root(void *bp);
-static void linked_list_connect(void *prev_bp, void *now_bp, void *next_bp);
 static int get_class(int size);
 static void allocate_block(void *bp, size_t class_num);
 static void extend_linked_list(void * bp, size_t created_block_num, size_t class_num);
 static void insert_to_class(void *bp, size_t class_num);
 
 
-
-
 // heap 영역에 class의 root포인터를 저장할 공간을 할당
 int root_init()
-{
+{   
+    // printf("entered root_init!\n");
     // class 개수만큼 할당
     if ((root_startp = mem_sbrk(CLASS_SIZE*WSIZE)) == (void *) -1) {
         return -1;
@@ -115,7 +107,8 @@ int root_init()
  */
 int mm_init(void)
 {
-    printf("---------------entered init!--------------- \n");
+    // printf("---------------entered init!--------------- \n");
+    void *heap_listp = NULL; // heap의 시작점 가리킴
     char *bp = NULL;
     root_init(); // 힙 영역에 미리 class root들 초기화
 
@@ -125,15 +118,11 @@ int mm_init(void)
         return -1;
     }
     PUT(heap_listp, 0); // start_of_heap (alignment를 위한 padding)
-    PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1)); // prologue header
-    PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); // prologue footer
+    PUT(heap_listp + (1*WSIZE), NULL); // prologue header
+    PUT(heap_listp + (2*WSIZE), NULL); // prologue footer
     PUT(heap_listp + (3*WSIZE), NULL); // epilogue header -> 이거 있어야함 ㅋㅋㅋ(heap 확장 시 끝이 어딘지 알기 위해서) -> 아니 없어도 되는 것 같기도..?
     heap_listp += (2*WSIZE); // 힙의 시작점 위치를 prologue header 뒤로 옮겨줌
 
-    // CHUNKSIZE만큼 힙 크기를 늘려줌 -----> 없어도 될듯?
-    // if (bp = extend_heap(CHUNKSIZE/WSIZE) == NULL) { // 힙을 늘릴 수 없으면
-    //     return -1;
-    // }
     return 0;
 }
 
@@ -142,23 +131,18 @@ int mm_init(void)
 static void *extend_heap(size_t words)
 {   
     // printf("entered extend_heap! \n");
-    char *bp; // block의 시작점(header 앞 / block pointer 인듯)
+    char *bp; // block의 시작점
     size_t size;
 
     // alignment를 위해 words의 사이즈가 홀수면 1을 더해서 2의 배수로 맞춰주고 byte 크기에 맞도록 WSIZE를 곱해준다.
     size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
-    
 
     // bp에 old_brk값이 들어감 새로 만들 블록의 시작점(헤더 뒤)
     if ((long)(bp = mem_sbrk(size)) == -1) { // extend가 불가능하면 NULL 리턴
         return NULL;
     }
-    // 힙을 늘리면서 생긴 공간을 블록으로 만들어주고
-    // (이전 힙의 epilogue, 새로 만든 힙의 끝-1 을 블록의 header, footer로 값을 넣어줌)
-    // 힙의 맨 끝으로 epilogue의 header를 옮겨줌
-    // PUT(HDRP(bp), PACK(size, 0));
 
-    // epilogue header 옮겨주기
+    // epilogue header 힙의 맨 끝으로 옮겨주기
     PUT(SUCP((char *)bp + size), NULL); // bp(확장된 힙 시작점, old_brk) + size == 힙의 끝지점
     
     return bp; // 생성된 블록의 bp 리턴
@@ -171,7 +155,7 @@ static void *extend_heap(size_t words)
  */
 void *mm_malloc(size_t size)
 {   
-    // printf("entered malloc! \n");
+    // printf("entered malloc with size : %d \n", size);
     
     if (size == 0) { // size 0 요청은 무시
         return NULL;
@@ -182,16 +166,19 @@ void *mm_malloc(size_t size)
     size_t created_block_num; // 생성된 블록 갯수
     char *bp; // 블록이 시작하는 위치 포인터
     
-    // if (size <= WSIZE) { // 요청한 size가 4보다 작으면 
-    //     asize = MIN_BLOCK_SIZE; // SUCC + 페이로드 4바이트 = 8바이트
-    // }
-    // else { // 요청한 사이즈(size)와 header+pred+succ+footer의 사이즈(2*DSIZE)와 여유 사이즈(DSIZE-1)를 고려해
-    // // DSIZE(8)의 배수(DSIZE*)만큼 할당하기 위한 식이 아래 식
-    //     asize = DSIZE * ((size + MIN_BLOCK_SIZE - 1) / DSIZE);
-    // }
+
+    // size_t temp_class_num = class_num;
 
     // class에 블록이 있나 찾기
-    if (bp = ROOTP(class_num) != NULL) {
+    // bp = ROOTP(temp_class_num);
+    // while ((bp == NULL) && temp_class_num <= CLASS_SIZE) {
+    //     temp_class_num++;
+    //     bp = ROOTP(temp_class_num);
+    // }
+
+    bp = ROOTP(class_num);
+    if (bp != NULL) {
+        // allocate_block(bp, temp_class_num);
         allocate_block(bp, class_num);
         return bp;
     }
@@ -200,10 +187,11 @@ void *mm_malloc(size_t size)
     
     // 할당해야 하는 블록의 사이즈가 CHUNKSIZE보다 작으면 블록의 갯수는 나눈 수만큼, 아니면 한 개만 할당
     created_block_num = (size <= CHUNKSIZE) ? CHUNKSIZE / size : 1;
+    // created_block_num = 1;
 
     // printf("malloc extend_heap runned! with size : %d \n", size);
     // 맞는 게 없다면 
-    extend_size = created_block_num * (WSIZE + size); // 블록 갯수 * 블록 사이즈
+    extend_size = created_block_num * size; // 블록 갯수 * 블록 사이즈
     if ((bp = extend_heap(extend_size/WSIZE)) == NULL) { // 키우려는 사이즈의 word 수만큼 힙 확장 시도
         return NULL; // 힙 확장 실패하면
     }
@@ -223,6 +211,8 @@ void *mm_malloc(size_t size)
 // class_num의 root != NULL이 아니라는 가정
 static void allocate_block(void *bp, size_t class_num)
 {
+    // printf("entered allocate_block! \n");
+    // printf("%p %p %d\n", bp, ROOTP(class_num), class_num); // 왜 둘이 다르지??
     // 블록 제거(root가 succ 블록 가리키게 해주기)
     PUT(ROOT_ADDR(class_num), GET_SUCC(bp)); // class_num의 루트에 현재 bp가 가리키는 값 넣어줌
     PUT(SUCP(bp), class_num); // 할당된 블록의 successor에 자신의 클래스 번호 넣어주기
@@ -233,9 +223,11 @@ static void allocate_block(void *bp, size_t class_num)
 // 힙을 확장하며 생긴 영역을 분할하고 링크드 리스트에 추가
 static void extend_linked_list(void * bp, size_t created_block_num, size_t class_num)
 {
-    size_t block_size = WSIZE + (1<<class_num);
+    // printf("entered extend_linked_list with bp : %p, b# : %d, class : %d\n", bp, created_block_num, class_num);
+    size_t block_size = 1<<class_num;
     // root의 시작점으로 bp를 넣어줌
     PUT(ROOT_ADDR(class_num), bp);
+    // printf("%p %p \n", ROOTP(class_num), bp);
 
     // 링크드 리스트 연결
     for (int i=0; i < created_block_num-1; i++) {
@@ -247,54 +239,6 @@ static void extend_linked_list(void * bp, size_t created_block_num, size_t class
 
 
 
-// // explicit check done
-// // class_num에 따른 링크드 리스트에서 bp를 찾아서 리턴
-// static void *find_fit(size_t class_num) {
-//     // printf("entered find_fit!\n");
-//     void *bp = root; // 탐색을 root에서 시작
-    
-//     // bp가 링크드 리스트의 끝에 도달(bp == NULL)하지 않고, 블록이 할당되었거나 asize가 블록 사이즈보다 클 동안
-//     // printf("find_fit with %p, %p\n", bp, NEXT_ADDR(bp));
-//     while (bp != NULL && (GET_ALLOC(HDRP(bp)) || (asize > GET_SIZE(HDRP(bp))))) { 
-//         // printf("%p -> ", bp);
-//         bp = NEXT_ADDR(bp); // 링크드 리스트의 다음 블록 주소
-//     }
-//     // printf("\n");
-//     return bp;
-// }
-
-// // explicit check done
-// // bp 블록의 앞을 asize만큼 쪼개주고 할당상태로 바꿔주기
-// static void place(void *bp, size_t asize) {
-//     // printf("entered place!\n");
-//     size_t old_size = GET_SIZE(HDRP(bp));
-    
-//     // 원래의 block에 asize를 할당하고 또 한 개의 블록을 만들 수 있는 공간(3*DSIZE)이 나면
-//     if ((old_size - asize) >= MIN_BLOCK_SIZE) { 
-//         void *prev_bp = PREV_ADDR(bp);
-//         void *next_bp = NEXT_ADDR(bp);
-    
-//         // 할당해줄 블록 header, footer 설정
-
-//         PUT(HDRP(bp), PACK(asize, 1)); 
-//         PUT(FTRP(bp), PACK(asize, 1));
-    
-//         // 나머지 블록 header, footer 재설정
-//         bp = NEXT_BLKP(bp);
-//         PUT(HDRP(bp), PACK(old_size-asize, 0)); 
-//         PUT(FTRP(bp), PACK(old_size-asize, 0));
-    
-//         // 나머지 블록과 기존 링크드 리스트 이웃 블록들과 재연결
-//         linked_list_connect(prev_bp, bp, next_bp);
-//     }
-//     else { // 원래 블록 전체를 할당해야 하는 경우
-//         linked_list_delete(bp); // 현재 블록을 링크드 리스트에서 삭제
-//         PUT(HDRP(bp), PACK(old_size, 1)); 
-//         PUT(FTRP(bp), PACK(old_size, 1));
-//     }
-// }
-
-// explicit check done
 /*
  * mm_free - Freeing a block does nothing.
  */
@@ -306,60 +250,9 @@ void mm_free(void *bp)
     PUT(SUCP(bp), ROOTP(class_num)); // 원래 root가 가리키던 블록을 bp의 succ이 가리키도록
     PUT(ROOT_ADDR(class_num), bp); // class의 root가 bp를 가리키도록
 
-    // // 블록의 header와 footer의 할당상태 0으로 바꿔줌
-    // PUT(HDRP(bp), PACK(size, 0));
-    // PUT(FTRP(bp), PACK(size, 0));
-    // coalesce(bp); // 이전 or 이후의 블록이 free라면 합체
 }
 
 
-// // free된 블록을 원래 class로 다시 넣어줌
-// static void insert_to_class(void *bp, size_t class_num) 
-// {  
-//     PUT(SUCP(bp), ROOTP(class_num)); // 원래 root가 가리키던 블록을 bp의 succ이 가리키도록
-//     PUT(ROOT_ADDR(class_num), bp); // class의 root가 bp를 가리키도록
-// }
-
-// // explicit check done
-// // coalesce로 들어오는 bp는 pred, succ 설정이 되어 있지 않아야 한다.
-// static void *coalesce(void *bp)
-// {   
-//     // printf("entered coalesce!\n");
-//     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // 이전 블록 할당 여부
-//     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp))); // 이후 블록 할당 여부
-//     size_t size = GET_SIZE(HDRP(bp)); // 현재 블록의 사이즈
-
-//     if (prev_alloc && next_alloc) { // case 1 - 앞, 뒤 블록 모두 이미 할당
-//         // 패스
-//     }
-//     else if (prev_alloc && !next_alloc) { // case 2 - 앞 할당, 뒤 free -> 뒤랑 합체
-//         linked_list_delete(NEXT_BLKP(bp));
-//         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-//         PUT(HDRP(bp), PACK(size, 0)); // header의 값 업데이트
-//         PUT(FTRP(bp), PACK(size, 0)); // footer의 값 업데이트 -> 반드시 header-footer 순으로 업데이트 해야함(FTRP 함수에 HDRP가 쓰이기 떄문)
-//         // 원래 있던 footer랑 header는 처리 안해줌..? -> 아 그냥 쓰레기 값이 되는 구나(어차피 접근 불가)
-//     }
-//     else if (!prev_alloc && next_alloc) { // case 3 - 앞 free, 뒤 할당 -> 앞이랑 합체
-//         linked_list_delete(PREV_BLKP(bp));
-//         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-//         PUT(FTRP(bp), PACK(size, 0)); // 현재 block의 footer 업데이트
-//         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // 이전 block의 header 업데이트
-//         bp = PREV_BLKP(bp); // 앞이랑 합쳤으니까 bp 업데이트
-//     }
-//     else { // case 4 - 앞, 뒤 모두 합치는 경우
-//         linked_list_delete(NEXT_BLKP(bp));
-//         linked_list_delete(PREV_BLKP(bp));
-//         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
-//         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // 이전 block의 header 업데이트
-//         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0)); // 이후 block의 footer 업데이트
-//         bp = PREV_BLKP(bp);
-//     }
-
-//     insert_to_root(bp); // bp를 링크드 리스트의 root로 넣어줌
-//     return bp;
-// }
-
-// explicit check done
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
@@ -385,88 +278,19 @@ void *mm_realloc(void *bp, size_t size) // bp를 size가 되도록 다시 alloca
     return newptr;
 }
 
-// // bp블록을 링크드 리스트에서 삭제
-// static void linked_list_delete(void *bp)
-// {   
-//     // printf("entered delete! \n");
-//     void *prev_bp = PREV_ADDR(bp); // 링크드리스트에서 bp의 이전 블록
-//     void *next_bp = NEXT_ADDR(bp); // bp의 이후 블록
 
-//     // 링크드 리스트에 bp만 있었던 경우 -> 링크드 리스트 비워주기
-//     if ((prev_bp == NULL) && (next_bp == NULL)) { 
-//         root = NULL;
-//     }
-//     // bp가 root와 연결되어 있었던 경우 -> next_bp를 root와 연결
-//     else if (prev_bp == NULL) { 
-//         root = next_bp;
-//         PUT(PRDP(next_bp), NULL);
-//     }
-//     // bp가 링크드 리스트의 맨 끝이었던 경우 -> prev_bp를 맨 끝으로
-//     else if (next_bp == NULL) {
-//         PUT(SUCP(prev_bp), NULL);
-//     }
-//     // bp의 앞, 뒤 블록이 모두 있었던 경우 -> prev_bp, next_bp를 서로 연결
-//     else {
-//         PUT(SUCP(prev_bp), next_bp);
-//         PUT(PRDP(next_bp), prev_bp);
-//     }
-// }
+/* class의 사이즈는 successor까지 포함한 것을 기준으로 한다.
+    (ex. 4-class의 블록 사이즈는 2^4 = 16이며, payload의 사이즈는 12가 된다.) */
 
+// size만큼 할당받고자 할 때 배정받을 최소 class 리턴
+// 0~CLASS_SIZE-1 의 class가 대상
+static int get_class(int size)
+{
+    // printf("entered get_class! \n");
+    size_t class_num = 3;
+    while (size + WSIZE > (1<<class_num)) {
+        class_num++;
+    }
 
-
-// // bp를 링크드 리스트의 root로 넣어줌
-// static void insert_to_root(void *bp) {
-//     // printf("insert_to_root %p %p \n", bp, root);
-//     // bp != root라는 가정
-//     if (root != NULL) {
-//         PUT(PRDP(root), bp);
-//     }
-//     PUT(PRDP(bp), NULL);
-//     PUT(SUCP(bp), root);
-//     root = bp;
-
-// }
-
-
-
-// // 링크드 리스트에서 prev_bp와 now_bp와 next_bp를 연결
-// static void linked_list_connect(void *prev_bp, void *now_bp, void *next_bp) {
-//     // printf("entered connect! %p %p %p\n", prev_bp, now_bp, next_bp);
-//     if ((prev_bp == NULL) && (next_bp == NULL)) {
-//         root = now_bp;
-//     }
-//     else if (prev_bp == NULL) {
-//         root = now_bp;
-//         PUT(PRDP(next_bp), now_bp);    
-//     }
-//     else if (next_bp == NULL) {
-//         PUT(SUCP(prev_bp), now_bp);    
-//     }
-//     else {
-//         PUT(SUCP(prev_bp), now_bp);
-//         PUT(PRDP(next_bp), now_bp);    
-//     }
-//     PUT(PRDP(now_bp), prev_bp);
-//     PUT(SUCP(now_bp), next_bp);
-// }
-
-
-// /* class의 사이즈는 payload+padding영역 기준이다.(ex. 4-class의 블록 사이즈는 2^4 + WSIZE = 20) */
-// // size만큼 할당받고자 할 때 배정받을 최소 class 리턴
-// // 0~CLASS_SIZE-1 의 class가 대상
-// static int get_class(int size) {
-//     size_t class_num = 0;
-//     while (size > (1<<class_num)) {
-//         class_num++;
-//     }
-//     if (class_num < 2){
-//         return 2; // 최소 페이로드 크기가 WSIZE(4바이트이기 때문)
-//     }
-
-//     if (class_num >= CLASS_SIZE) { // 나중에 에러 안 뜨면 지워주기
-//         printf("ERROR -- 너무 큰 사이즈가 들어와 클래스에 할당할 수 없습니다.\n");
-//         return NULL;
-//     }
-
-//     return class_num;
-// }
+    return class_num;
+}
