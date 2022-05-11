@@ -72,6 +72,7 @@ team_t team = {
 #define PREV_ADDR(bp) (*(int *)(PRDP(bp)))
 #define NEXT_ADDR(bp) (*(int *)(SUCP(bp)))
 
+
 // 만들 수 있는 최소한의 블록 사이즈(implicit이냐, explicit이냐에 따라 수정)
 // header+predecessor+successor+footer = 16이므로 payload가 들어갈 최소 공간(8)까지 세 배 할당
 #define MIN_BLOCK_SIZE 3*DSIZE // explicit
@@ -194,17 +195,14 @@ static void *find_fit(size_t asize) {
     // printf("entered find_fit!\n");
     void *bp = root; // 탐색을 root에서 시작
     
-    // bp가 링크드 리스트의 끝에 도달(bp == NULL)하지 않고, 블록이 할당되었거나 asize가 블록 사이즈보다 클 동안
+    // bp가 링크드 리스트의 끝에 도달(bp == NULL)하지 않고, asize가 블록 사이즈보다 클 동안
     // printf("find_fit with %p, %p\n", bp, NEXT_ADDR(bp));
-    while (bp != NULL && (GET_ALLOC(HDRP(bp)) || (asize > GET_SIZE(HDRP(bp))))) { 
+    while (bp != NULL && (asize > GET_SIZE(HDRP(bp)))) { 
         // printf("%p -> ", bp);
         bp = NEXT_ADDR(bp); // 링크드 리스트의 다음 블록 주소
     }
     // printf("\n");
-    if (bp != NULL) {
-        return bp;
-    }
-    return NULL;
+    return bp;
 }
 
 // explicit check done
